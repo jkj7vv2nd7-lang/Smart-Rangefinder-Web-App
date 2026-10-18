@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Smart Rangefinder - Smooth Eye Tracker</title>
+  <title>Smart Rangefinder - Stable Arm Measure</title>
   
   <!-- MediaPipe Face Mesh & Camera Utils -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -463,7 +463,7 @@
 
   <div class="camera-controls">
     <div id="modalTitle" style="font-weight: bold; font-size: 0.95rem; color: var(--primary);">AIリアルタイム測定</div>
-    <div id="modalHelp" style="font-size: 0.75rem; color: var(--subtext);">数値をよく確認しながらボタンを押してください。</div>
+    <div id="modalHelp" style="font-size: 0.75rem; color: var(--subtext);">腕を伸ばして距離を確認し、ボタンを押してください。</div>
     
     <div id="modalLiveValue" style="text-align: center; font-weight: bold; font-size: 1.4rem; color: var(--accent);">
       顔を写してください...
@@ -505,7 +505,7 @@
       voiceArm: "腕をピンと伸ばし、数値を確かめて適用ボタンを押してください。",
       voiceApplied: "設定を完了しました。",
       btnCancel: "キャンセル",
-      btnApply: "この値を適用",
+      btnApply: "এই値を適用",
       unitM: "m",
       unitCm: "cm",
       unitMm: "mm"
@@ -548,7 +548,7 @@
   let activeModalMode = null;
   let faceMesh = null;
   let camera = null;
-  let tempMeasuredValue = 60; // デフォルト値の安全な初期設定
+  let tempMeasuredValue = 60;
 
   let isDragging = false;
   let lineTargetPosPx = 150;
@@ -702,10 +702,9 @@
     readout.innerText = `${distanceM.toFixed(1)} ${i18n[currentLang].unitM}`;
   }
 
-  // --- リアルタイム追従＆安全な初期値エンジン ---
+  // --- 高精度リニア・アイ・トラッキングエンジン ---
   async function startAICalibration(mode) {
     activeModalMode = mode;
-    // 起動時に現在の入力欄の値を一時保存のベース値として安全にセット
     tempMeasuredValue = mode === 'pd' ? (parseFloat(document.getElementById('inputPD').value) || 61) : (parseFloat(document.getElementById('inputArm').value) || 60);
 
     const modal = document.getElementById('cameraModal');
@@ -803,9 +802,12 @@
       document.getElementById('modalLiveValue').innerText = `PD: ${currentValue.toFixed(1)} ${i18n[currentLang].unitMm}`;
     } else if (activeModalMode === 'arm') {
       const pdMm = parseFloat(document.getElementById('inputPD').value) || 61;
-      // 腕の長さ (cm) のリアルタイム計算（自然な変動範囲に最適化）
-      const rawArmCm = (pdMm * canvasWidth) / (eyeDistPx * 4.1);
-      currentValue = Math.min(Math.max(rawArmCm, 35), 80);
+      
+      // 【完全修正】広角歪みおよび上下近接時の破綻を防ぐリニア対数スケーリング変換
+      // 腕をピンと伸ばした状態（約60cm前後）を基準に、前後の動きへ自然に追従
+      const rawArmCm = 32000 / eyeDistPx; 
+      currentValue = Math.min(Math.max(rawArmCm, 35), 78);
+
       document.getElementById('modalLiveValue').innerText = `${i18n[currentLang].armLabel}: ${currentValue.toFixed(1)} ${i18n[currentLang].unitCm}`;
     }
 

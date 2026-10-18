@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Smart Rangefinder - Eye Track & Auto Capture</title>
+  <title>Smart Rangefinder - Stable Eye Tracker</title>
   
   <!-- MediaPipe Face Mesh & Camera Utils -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -160,7 +160,6 @@
       width: 100%;
     }
 
-    /* Target Selector Buttons */
     .target-preset-grid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -186,7 +185,6 @@
       font-weight: bold;
     }
 
-    /* Measuring Display Modes */
     .mode-tabs {
       display: flex;
       background: #e2e8f0;
@@ -222,7 +220,6 @@
       display: block;
     }
 
-    /* Screen Scale Display */
     .digital-card {
       width: 100%;
       height: 180px;
@@ -261,7 +258,6 @@
       left: 2px;
     }
 
-    /* Interactive Tap Mode */
     .interactive-box {
       width: 100%;
       height: 220px;
@@ -363,21 +359,21 @@
       line-height: 1.3;
     }
 
-    /* Confirm Banner Overlay */
     .confirm-overlay-box {
       position: absolute;
       top: 20px;
       left: 20px;
       right: 20px;
-      background: rgba(15, 23, 42, 0.9);
+      background: rgba(15, 23, 42, 0.95);
       color: white;
-      padding: 12px;
-      border-radius: 8px;
+      padding: 14px;
+      border-radius: 10px;
       text-align: center;
       font-size: 0.9rem;
       display: none;
       z-index: 10;
-      box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+      border: 1px solid #38bdf8;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.5);
     }
   </style>
 </head>
@@ -481,19 +477,18 @@
     <video id="webcam" autoplay playsinline muted></video>
     <canvas id="cameraCanvas" class="camera-overlay-canvas"></canvas>
     
-    <!-- 安定検出時の確認ダイアログメッセージ -->
     <div class="confirm-overlay-box" id="confirmOverlay">
-      <div id="confirmText" style="font-weight: bold; font-size: 1.05rem; color: #38bdf8;"></div>
-      <div style="font-size: 0.75rem; margin-top: 4px;" data-i18n="promptConfirm">この値で設定しますか？</div>
+      <div id="confirmText" style="font-weight: bold; font-size: 1.1rem; color: #38bdf8;"></div>
+      <div style="font-size: 0.8rem; margin-top: 4px;" data-i18n="promptConfirm">この値で設定しますか？</div>
     </div>
   </div>
 
   <div class="camera-controls">
     <div id="modalTitle" style="font-weight: bold; font-size: 0.95rem; color: var(--primary);">AI検出中...</div>
-    <div id="modalHelp" style="font-size: 0.75rem; color: var(--subtext);">瞳の追従リングを確認し、固定してそのままお待ちください。</div>
+    <div id="modalHelp" style="font-size: 0.75rem; color: var(--subtext);">カメラを正面から見つめ、顔を動かさずにしばらくお待ちください。</div>
     
     <div id="modalLiveValue" style="text-align: center; font-weight: bold; font-size: 1.3rem; color: var(--accent);">
-      --
+      検出中...
     </div>
 
     <div style="display: flex; gap: 8px;">
@@ -530,7 +525,7 @@
       modalArmTitle: "AI 腕の長さ (画面距離) 追従測定",
       voicePD: "カメラを正面から見て静止してください。",
       voiceArm: "腕をピンと伸ばし、カメラを正面から見てください。",
-      voiceStable: "測定値が安定しました。設定しますか？",
+      voiceStable: "測定値が安定しました。この値で設定しますか？",
       voiceApplied: "設定を完了しました。",
       btnCancel: "キャンセル",
       btnApply: "この値を適用",
@@ -735,11 +730,12 @@
     readout.innerText = `${distanceM.toFixed(1)} ${i18n[currentLang].unitM}`;
   }
 
-  // --- 安定時ダイアログ確認付き AI Eye-Tracking Engine ---
+  // --- 修正版 AI Eye-Tracking Calibration ---
   async function startAICalibration(mode) {
     activeModalMode = mode;
     stableHistory = [];
     isStableLocked = false;
+    tempMeasuredValue = 0;
 
     const modal = document.getElementById('cameraModal');
     const modalTitle = document.getElementById('modalTitle');
@@ -748,6 +744,7 @@
 
     confirmOverlay.style.display = 'none';
     modalTitle.innerText = mode === 'pd' ? i18n[currentLang].modalPDTitle : i18n[currentLang].modalArmTitle;
+    document.getElementById('modalLiveValue').innerText = "検出中...";
     modal.classList.add('active');
 
     speakMessage(mode === 'pd' ? i18n[currentLang].voicePD : i18n[currentLang].voiceArm);
@@ -759,8 +756,8 @@
       faceMesh.setOptions({
         maxNumFaces: 1,
         refineLandmarks: true,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.6
       });
       faceMesh.onResults(onFaceMeshResults);
     }
@@ -797,7 +794,7 @@
   }
 
   function onFaceMeshResults(results) {
-    if (isStableLocked) return; // 判定確定後は更新を一時固定
+    if (isStableLocked) return;
 
     const canvas = document.getElementById('cameraCanvas');
     const ctx = canvas.getContext('2d');
@@ -810,36 +807,37 @@
 
     if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
       document.getElementById('modalLiveValue').innerText = "顔を映してください";
+      stableHistory = []; // 顔が見失われたら履歴リセット
       return;
     }
 
     const landmarks = results.multiFaceLandmarks[0];
     
-    // 左右の目（外眼角 33, 263 または 虹彩 468, 473）
     const leftEye = landmarks[468] || landmarks[33];
     const rightEye = landmarks[473] || landmarks[263];
 
-    // 鏡像反転に対応した正しいX/Y画面座標
+    if (!leftEye || !rightEye) return;
+
     const x1 = (1 - leftEye.x) * canvas.width;
     const y1 = leftEye.y * canvas.height;
     const x2 = (1 - rightEye.x) * canvas.width;
     const y2 = rightEye.y * canvas.height;
 
-    // 瞳トラッキングリング描画
     drawPupilTracker(ctx, x1, y1);
     drawPupilTracker(ctx, x2, y2);
 
     const eyeDistPx = Math.hypot(x2 - x1, y2 - y1);
     const canvasWidth = canvas.width;
 
+    if (eyeDistPx < 10) return; // 異常値排除
+
     let currentValue = 0;
 
     if (activeModalMode === 'pd') {
-      currentValue = Math.min(Math.max((eyeDistPx / canvasWidth) * 270, 52), 72);
+      currentValue = Math.min(Math.max((eyeDistPx / canvasWidth) * 270, 52), 74);
       document.getElementById('modalLiveValue').innerText = `PD: ${currentValue.toFixed(1)} ${i18n[currentLang].unitMm}`;
     } else if (activeModalMode === 'arm') {
       const pdMm = parseFloat(document.getElementById('inputPD').value) || 61;
-      // 画面との距離（cm）をリアルタイム可変計算
       const rawArmCm = (pdMm * canvasWidth) / (eyeDistPx * 4.0);
       currentValue = Math.min(Math.max(rawArmCm, 30), 85);
       document.getElementById('modalLiveValue').innerText = `${i18n[currentLang].armLabel}: ${currentValue.toFixed(1)} ${i18n[currentLang].unitCm}`;
@@ -847,21 +845,22 @@
 
     tempMeasuredValue = currentValue;
 
-    // 安定検出のチェック（最近10フレームのぶれ幅が小さいか）
-    stableHistory.push(currentValue);
-    if (stableHistory.length > 12) stableHistory.shift();
+    // 有効な数値のみを履歴（20フレーム＝約2秒分）に保存
+    if (!isNaN(currentValue) && currentValue > 0) {
+      stableHistory.push(currentValue);
+      if (stableHistory.length > 20) stableHistory.shift();
 
-    if (stableHistory.length === 12) {
-      const maxVal = Math.max(...stableHistory);
-      const minVal = Math.min(...stableHistory);
-      if (maxVal - minVal < 1.8) { // ぶれ幅1.8以下で安定とみなす
-        isStableLocked = true;
-        triggerConfirmationPrompt(currentValue);
+      if (stableHistory.length === 20) {
+        const maxVal = Math.max(...stableHistory);
+        const minVal = Math.min(...stableHistory);
+        if (maxVal - minVal < 2.0) { // 2秒間ぶれが2以内の時に確定ダイアログを起動
+          isStableLocked = true;
+          triggerConfirmationPrompt(currentValue);
+        }
       }
     }
   }
 
-  // 測定値安定時のキャプチャ＆メッセージ提示
   function triggerConfirmationPrompt(value) {
     const confirmOverlay = document.getElementById('confirmOverlay');
     const confirmText = document.getElementById('confirmText');
@@ -879,18 +878,21 @@
     modal.classList.remove('active');
     document.getElementById('confirmOverlay').style.display = 'none';
     isStableLocked = false;
+    stableHistory = [];
     if (camera) {
       camera.stop();
     }
   }
 
   function applyCameraMeasurement() {
-    if (activeModalMode === 'pd') {
-      document.getElementById('inputPD').value = tempMeasuredValue.toFixed(1);
-    } else if (activeModalMode === 'arm') {
-      document.getElementById('inputArm').value = tempMeasuredValue.toFixed(1);
+    if (tempMeasuredValue > 0) {
+      if (activeModalMode === 'pd') {
+        document.getElementById('inputPD').value = tempMeasuredValue.toFixed(1);
+      } else if (activeModalMode === 'arm') {
+        document.getElementById('inputArm').value = tempMeasuredValue.toFixed(1);
+      }
+      speakMessage(i18n[currentLang].voiceApplied);
     }
-    speakMessage(i18n[currentLang].voiceApplied);
     closeCameraModal();
     updateCalculations();
   }

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Smart Rangefinder - AI Auto Calibration</title>
+  <title>Smart Rangefinder - AI Voice Guide</title>
   
   <!-- MediaPipe Face Mesh & Camera Utils の読み込み -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -389,7 +389,7 @@
         <button class="btn btn-secondary" onclick="startAICalibration('pd')" data-i18n="btnCamPD">AI自動計測</button>
       </div>
       <div class="instruction-banner" data-i18n="pdHelp">
-        ※AIがインカメラから瞳孔の位置を検出し、一発で自動測定します。
+        ※AIがインカメラから瞳孔の位置を検出し、自動計測します。
       </div>
     </div>
 
@@ -466,13 +466,16 @@
   </div>
   <div class="camera-controls">
     <div id="modalTitle" style="font-weight: bold; font-size: 0.95rem; color: var(--primary);">AI解析中...</div>
-    <div id="modalHelp" style="font-size: 0.75rem; color: var(--subtext);">顔を正面に向けて静止してください。自動で計測します。</div>
+    <div id="modalHelp" style="font-size: 0.75rem; color: var(--subtext);">数値をよく確認してからボタンを押してください。</div>
     
-    <div id="modalLiveValue" style="text-align: center; font-weight: bold; font-size: 1.1rem; color: var(--accent);">
+    <div id="modalLiveValue" style="text-align: center; font-weight: bold; font-size: 1.3rem; color: var(--accent);">
       --
     </div>
 
-    <button class="btn btn-secondary btn-block" onclick="closeCameraModal()" data-i18n="btnCancel">キャンセル</button>
+    <div style="display: flex; gap: 8px;">
+      <button class="btn btn-secondary" style="flex:1;" onclick="closeCameraModal()" data-i18n="btnCancel">キャンセル</button>
+      <button class="btn btn-accent" style="flex:1;" onclick="applyCameraMeasurement()" data-i18n="btnApply">この値を適用</button>
+    </div>
   </div>
 </div>
 
@@ -483,7 +486,7 @@
       secBodyTitle: "1. 身体・AI自動キャリブレーション",
       pdLabel: "瞳孔間距離 (PD) [mm]",
       btnCamPD: "AI自動計測",
-      pdHelp: "※AIがインカメラから瞳孔の位置を検出し、一発で自動測定します。",
+      pdHelp: "※AIがインカメラから瞳孔の位置を検出し、自動計測します。",
       armLabel: "腕の長さ (目から画面) [cm]",
       btnCamArm: "AI距離測定",
       armHelp: "※腕をピンと伸ばしてスマホを持った状態で測定します。",
@@ -499,10 +502,13 @@
       tabInteractive: "タップ対話測定",
       cardInstruction: "【使い方】腕をピンと伸ばします。片目を閉じ、目標物の左端に赤線『0』を合わせます。目線を動かさず反対の目で見直した時、目標物左端に重なる目盛りが距離です。",
       interactiveInstruction: "【使い方】1. 右目で目標物左端に赤線を合わせます。 2. スマホを動かさず左目で見直し、青線を目標物左端までドラッグすると距離が計算されます。",
-      modalPDTitle: "AIによる PD (瞳孔間距離) 自動測定",
-      modalArmTitle: "AIによる 腕の長さ 自動測定",
-      modalAnalyzing: "AI解析中... 顔を動かさずにお待ちください",
+      modalPDTitle: "AIによる PD (瞳孔間距離) 測定",
+      modalArmTitle: "AIによる 腕の長さ 測定",
+      voicePD: "カメラを直視し、顔を動かさずにお待ちください。",
+      voiceArm: "腕をピンと伸ばして、カメラに顔を合わせてください。",
+      voiceApplied: "測定値を適用しました。",
       btnCancel: "キャンセル",
+      btnApply: "この値を適用",
       unitM: "m",
       unitCm: "cm",
       unitMm: "mm"
@@ -512,7 +518,7 @@
       secBodyTitle: "1. Body & AI Auto Calibration",
       pdLabel: "Interpupillary Distance (PD) [mm]",
       btnCamPD: "AI Measure",
-      pdHelp: "* AI automatically detects pupil positions from front camera in one touch.",
+      pdHelp: "* AI automatically detects pupil positions from front camera.",
       armLabel: "Arm Length (Eye to Screen) [cm]",
       btnCamArm: "AI Distance",
       armHelp: "* Measure while holding phone with fully extended arm.",
@@ -528,10 +534,13 @@
       tabInteractive: "Interactive Tap",
       cardInstruction: "[How to use] Fully extend arm. Close one eye and align red line '0' with target left edge. Switch to other eye without moving; overlapping scale is distance.",
       interactiveInstruction: "[How to use] 1. Align red line with target left edge using Right Eye. 2. Keep phone still, switch to Left Eye, and drag blue line to target left edge.",
-      modalPDTitle: "AI Auto PD Measurement",
-      modalArmTitle: "AI Auto Arm Length Measurement",
-      modalAnalyzing: "Analyzing with AI... Please hold still",
+      modalPDTitle: "AI PD Measurement",
+      modalArmTitle: "AI Arm Length Measurement",
+      voicePD: "Look at the camera and hold still.",
+      voiceArm: "Fully extend your arm and face the camera.",
+      voiceApplied: "Measurement applied.",
       btnCancel: "Cancel",
+      btnApply: "Apply Value",
       unitM: "m",
       unitCm: "cm",
       unitMm: "mm"
@@ -539,15 +548,25 @@
   };
 
   let currentLang = 'ja';
-  let activeModalMode = null; // 'pd' or 'arm'
+  let activeModalMode = null;
   let mediaStream = null;
   let faceMesh = null;
   let camera = null;
-  let detectedValues = { pd: 64, arm: 60 };
-  let stabilityCount = 0;
+  let tempMeasuredValue = 0;
 
   let isDragging = false;
   let lineTargetPosPx = 150;
+
+  // 音声案内（Speech Synthesis）関数
+  function speakMessage(text) {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel(); // 連続発話の重複を防ぐ
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = currentLang === 'ja' ? 'ja-JP' : 'en-US';
+      utterance.rate = 1.0;
+      window.speechSynthesis.speak(utterance);
+    }
+  }
 
   function switchLanguage() {
     const langSelect = document.getElementById('langSelect');
@@ -688,18 +707,19 @@
     readout.innerText = `${distanceM.toFixed(1)} ${i18n[currentLang].unitM}`;
   }
 
-  // --- AI FaceMesh Calibration Integration ---
+  // --- AI FaceMesh Calibration Integration with Voice Guide ---
   async function startAICalibration(mode) {
     activeModalMode = mode;
     const modal = document.getElementById('cameraModal');
     const modalTitle = document.getElementById('modalTitle');
-    const modalHelp = document.getElementById('modalHelp');
     const videoElement = document.getElementById('webcam');
 
     modalTitle.innerText = mode === 'pd' ? i18n[currentLang].modalPDTitle : i18n[currentLang].modalArmTitle;
-    modalHelp.innerText = i18n[currentLang].modalAnalyzing;
     modal.classList.add('active');
-    stabilityCount = 0;
+
+    // 音声ガイダンス実行
+    const voiceMsg = mode === 'pd' ? i18n[currentLang].voicePD : i18n[currentLang].voiceArm;
+    speakMessage(voiceMsg);
 
     if (!faceMesh) {
       faceMesh = new FaceMesh({
@@ -743,14 +763,10 @@
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
-      document.getElementById('modalLiveValue').innerText = i18n[currentLang].modalAnalyzing;
       return;
     }
 
     const landmarks = results.multiFaceLandmarks[0];
-    
-    // MediaPipe Landmarks for Left Iris Center (468) and Right Iris Center (473)
-    // Or outer eye corners (Left: 33, Right: 263)
     const leftEye = landmarks[33];
     const rightEye = landmarks[263];
 
@@ -767,38 +783,17 @@
     ctx.arc(x2, y2, 15, 0, 2 * Math.PI);
     ctx.stroke();
 
-    // Pixel distance between eyes
     const eyeDistPx = Math.hypot(x2 - x1, y2 - y1);
 
     if (activeModalMode === 'pd') {
-      // Estimate PD based on standard human optical geometry relative to screen pixel density
-      // Standard inter-pupillary pixel ratio formula
       const calculatedPD = Math.min(Math.max((eyeDistPx * 0.22), 50), 75);
-      detectedValues.pd = calculatedPD;
-
+      tempMeasuredValue = calculatedPD;
       document.getElementById('modalLiveValue').innerText = `PD: ${calculatedPD.toFixed(1)} ${i18n[currentLang].unitMm}`;
-      stabilityCount++;
-
-      if (stabilityCount > 15) { // Auto apply after stable frames
-        document.getElementById('inputPD').value = calculatedPD.toFixed(1);
-        closeCameraModal();
-        updateCalculations();
-      }
-
     } else if (activeModalMode === 'arm') {
       const pdMm = parseFloat(document.getElementById('inputPD').value) || 64;
-      // Optical formula: Arm Length (cm) = (PD [mm] * FocalLengthFactor) / eyeDistPx
       const calculatedArm = Math.min(Math.max((pdMm * 420) / eyeDistPx, 35), 90);
-      detectedValues.arm = calculatedArm;
-
+      tempMeasuredValue = calculatedArm;
       document.getElementById('modalLiveValue').innerText = `${i18n[currentLang].armLabel}: ${calculatedArm.toFixed(1)} ${i18n[currentLang].unitCm}`;
-      stabilityCount++;
-
-      if (stabilityCount > 15) { // Auto apply after stable frames
-        document.getElementById('inputArm').value = calculatedArm.toFixed(1);
-        closeCameraModal();
-        updateCalculations();
-      }
     }
   }
 
@@ -808,6 +803,17 @@
     if (camera) {
       camera.stop();
     }
+  }
+
+  function applyCameraMeasurement() {
+    if (activeModalMode === 'pd') {
+      document.getElementById('inputPD').value = tempMeasuredValue.toFixed(1);
+    } else if (activeModalMode === 'arm') {
+      document.getElementById('inputArm').value = tempMeasuredValue.toFixed(1);
+    }
+    speakMessage(i18n[currentLang].voiceApplied);
+    closeCameraModal();
+    updateCalculations();
   }
 
   document.addEventListener('DOMContentLoaded', () => {

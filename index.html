@@ -432,7 +432,7 @@
         <div class="preset-btn" onclick="setPresetTarget(21, this)" data-i18n="presetA4">A4短辺 (21cm)</div>
         <div class="preset-btn" onclick="setPresetTarget(90, this)" data-i18n="presetDoor">ドア幅 (90cm)</div>
         <div class="preset-btn" onclick="setPresetTarget(170, this)" data-i18n="presetHuman">人の身長 (170cm)</div>
-        <div class="preset-btn" onclick="setPresetTarget(480, this)" data-i18n="presetCar">乗用車全長 (4.8m)</div>
+        <div class="preset-btn" onclick="setPresetCar(480, this)" data-i18n="presetCar">乗用車全長 (4.8m)</div>
       </div>
     </div>
   </div>
@@ -485,10 +485,10 @@
 
   <div class="camera-controls">
     <div id="modalTitle" style="font-weight: bold; font-size: 0.95rem; color: var(--primary);">AI検出中...</div>
-    <div id="modalHelp" style="font-size: 0.75rem; color: var(--subtext);">カメラを正面から見つめ、顔を動かさずにしばらくお待ちください。</div>
+    <div id="modalHelp" style="font-size: 0.75rem; color: var(--subtext);">カメラを直視し、瞳にリングが重なるようにしてください。</div>
     
     <div id="modalLiveValue" style="text-align: center; font-weight: bold; font-size: 1.3rem; color: var(--accent);">
-      検出中...
+      初期化中...
     </div>
 
     <div style="display: flex; gap: 8px;">
@@ -521,10 +521,10 @@
       tabInteractive: "タップ対話測定",
       cardInstruction: "【使い方】腕をピンと伸ばします。片目を閉じ、目標物の左端に赤線『0』を合わせます。目線を動かさず反対の目で見直した時、目標物左端に重なる目盛りが距離です。",
       interactiveInstruction: "【使い方】1. 右目で目標物左端に赤線を合わせます。 2. スマホを動かさず左目で見直し、青線を目標物左端までドラッグすると距離が計算されます。",
-      modalPDTitle: "AI PD (瞳孔間距離) 追従測定",
-      modalArmTitle: "AI 腕の長さ (画面距離) 追従測定",
-      voicePD: "カメラを正面から見て静止してください。",
-      voiceArm: "腕をピンと伸ばし、カメラを正面から見てください。",
+      modalPDTitle: "AI PD (瞳孔間距離) 測定",
+      modalArmTitle: "AI 腕の長さ (画面距離) 測定",
+      voicePD: "カメラを直視してください。AIが瞳を検出します。",
+      voiceArm: "腕をピンと伸ばし、カメラを直視してください。",
       voiceStable: "測定値が安定しました。この値で設定しますか？",
       voiceApplied: "設定を完了しました。",
       btnCancel: "キャンセル",
@@ -555,9 +555,9 @@
       tabInteractive: "Interactive Tap",
       cardInstruction: "[How to use] Fully extend arm. Close one eye and align red line '0' with target left edge. Switch to other eye without moving; overlapping scale is distance.",
       interactiveInstruction: "[How to use] 1. Align red line with target left edge using Right Eye. 2. Keep phone still, switch to Left Eye, and drag blue line to target left edge.",
-      modalPDTitle: "AI PD Tracking Measurement",
-      modalArmTitle: "AI Arm Length Tracking Measurement",
-      voicePD: "Look at the camera and hold still.",
+      modalPDTitle: "AI PD Measurement",
+      modalArmTitle: "AI Arm Length Measurement",
+      voicePD: "Look at the camera. AI is detecting your pupils.",
       voiceArm: "Fully extend your arm and look at the camera.",
       voiceStable: "Measurement stabilized. Do you want to set this value?",
       voiceApplied: "Value applied.",
@@ -577,6 +577,7 @@
   let tempMeasuredValue = 0;
   let stableHistory = [];
   let isStableLocked = false;
+  let warmUpCounter = 0; // ウォームアップ用カウンタ
 
   let isDragging = false;
   let lineTargetPosPx = 150;
@@ -730,11 +731,12 @@
     readout.innerText = `${distanceM.toFixed(1)} ${i18n[currentLang].unitM}`;
   }
 
-  // --- 修正版 AI Eye-Tracking Calibration ---
+  // --- 高精度AIトラッキング＆ウォームアップ保護エンジン ---
   async function startAICalibration(mode) {
     activeModalMode = mode;
     stableHistory = [];
     isStableLocked = false;
+    warmUpCounter = 0; // 起動ごとにウォームアップをリセット
     tempMeasuredValue = 0;
 
     const modal = document.getElementById('cameraModal');
@@ -744,7 +746,7 @@
 
     confirmOverlay.style.display = 'none';
     modalTitle.innerText = mode === 'pd' ? i18n[currentLang].modalPDTitle : i18n[currentLang].modalArmTitle;
-    document.getElementById('modalLiveValue').innerText = "検出中...";
+    document.getElementById('modalLiveValue').innerText = "顔を写してください...";
     modal.classList.add('active');
 
     speakMessage(mode === 'pd' ? i18n[currentLang].voicePD : i18n[currentLang].voiceArm);
@@ -756,8 +758,8 @@
       faceMesh.setOptions({
         maxNumFaces: 1,
         refineLandmarks: true,
-        minDetectionConfidence: 0.6,
-        minTrackingConfidence: 0.6
+        minDetectionConfidence: 0.65,
+        minTrackingConfidence: 0.65
       });
       faceMesh.onResults(onFaceMeshResults);
     }
@@ -806,13 +808,15 @@
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
-      document.getElementById('modalLiveValue').innerText = "顔を映してください";
-      stableHistory = []; // 顔が見失われたら履歴リセット
+      document.getElementById('modalLiveValue').innerText = "顔をカメラに向けてください";
+      stableHistory = [];
+      warmUpCounter = 0;
       return;
     }
 
     const landmarks = results.multiFaceLandmarks[0];
     
+    // 瞳孔（虹彩）中心インデックス 468 (左), 473 (右)
     const leftEye = landmarks[468] || landmarks[33];
     const rightEye = landmarks[473] || landmarks[263];
 
@@ -829,31 +833,39 @@
     const eyeDistPx = Math.hypot(x2 - x1, y2 - y1);
     const canvasWidth = canvas.width;
 
-    if (eyeDistPx < 10) return; // 異常値排除
+    if (eyeDistPx < 15 || eyeDistPx > canvasWidth * 0.6) return; // 異常なピクセル距離を排除
 
     let currentValue = 0;
 
     if (activeModalMode === 'pd') {
-      currentValue = Math.min(Math.max((eyeDistPx / canvasWidth) * 270, 52), 74);
+      currentValue = Math.min(Math.max((eyeDistPx / canvasWidth) * 280, 50), 75);
       document.getElementById('modalLiveValue').innerText = `PD: ${currentValue.toFixed(1)} ${i18n[currentLang].unitMm}`;
     } else if (activeModalMode === 'arm') {
       const pdMm = parseFloat(document.getElementById('inputPD').value) || 61;
-      const rawArmCm = (pdMm * canvasWidth) / (eyeDistPx * 4.0);
-      currentValue = Math.min(Math.max(rawArmCm, 30), 85);
+      const rawArmCm = (pdMm * canvasWidth) / (eyeDistPx * 3.8);
+      currentValue = Math.min(Math.max(rawArmCm, 40), 80);
       document.getElementById('modalLiveValue').innerText = `${i18n[currentLang].armLabel}: ${currentValue.toFixed(1)} ${i18n[currentLang].unitCm}`;
     }
 
     tempMeasuredValue = currentValue;
 
-    // 有効な数値のみを履歴（20フレーム＝約2秒分）に保存
+    // --- ウォームアップ保護 ---
+    // 最初の40フレーム（約1.5秒）は数値が落ち着くまで測定を確定させない
+    if (warmUpCounter < 40) {
+      warmUpCounter++;
+      return;
+    }
+
+    // 有効な数値のみ安定判定の履歴（25フレーム）に蓄積
     if (!isNaN(currentValue) && currentValue > 0) {
       stableHistory.push(currentValue);
-      if (stableHistory.length > 20) stableHistory.shift();
+      if (stableHistory.length > 25) stableHistory.shift();
 
-      if (stableHistory.length === 20) {
+      if (stableHistory.length === 25) {
         const maxVal = Math.max(...stableHistory);
         const minVal = Math.min(...stableHistory);
-        if (maxVal - minVal < 2.0) { // 2秒間ぶれが2以内の時に確定ダイアログを起動
+        // ぶれ幅が1.5未満でしっかり安定したと判断した場合のみダイアログ表示
+        if (maxVal - minVal < 1.5) {
           isStableLocked = true;
           triggerConfirmationPrompt(currentValue);
         }
@@ -879,6 +891,7 @@
     document.getElementById('confirmOverlay').style.display = 'none';
     isStableLocked = false;
     stableHistory = [];
+    warmUpCounter = 0;
     if (camera) {
       camera.stop();
     }

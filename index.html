@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Smart Rangefinder - Phone Only</title>
   
-  <!-- スマホのホーム画面用アイコン設定 (SVGインラインデータURI) -->
+  <!-- スマホホーム画面用アイコン設定 -->
   <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='110' fill='%232563eb'/><circle cx='256' cy='256' r='140' fill='none' stroke='%23ffffff' stroke-width='24'/><circle cx='256' cy='256' r='60' fill='none' stroke='%2310b981' stroke-width='20'/><line x1='256' y1='60' x2='256' y2='140' stroke='%23ffffff' stroke-width='20' stroke-linecap='round'/><line x1='256' y1='372' x2='256' y2='452' stroke='%23ffffff' stroke-width='20' stroke-linecap='round'/><line x1='60' y1='256' x2='140' y2='256' stroke='%23ffffff' stroke-width='20' stroke-linecap='round'/><line x1='372' y1='256' x2='452' y2='256' stroke='%23ffffff' stroke-width='20' stroke-linecap='round'/><circle cx='256' cy='256' r='16' fill='%23ef4444'/></svg>">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='110' fill='%232563eb'/><circle cx='256' cy='256' r='140' fill='none' stroke='%23ffffff' stroke-width='24'/><circle cx='256' cy='256' r='60' fill='none' stroke='%2310b981' stroke-width='20'/><line x1='256' y1='60' x2='256' y2='140' stroke='%23ffffff' stroke-width='20' stroke-linecap='round'/><line x1='256' y1='372' x2='256' y2='452' stroke='%23ffffff' stroke-width='20' stroke-linecap='round'/><line x1='60' y1='256' x2='140' y2='256' stroke='%23ffffff' stroke-width='20' stroke-linecap='round'/><line x1='372' y1='256' x2='452' y2='256' stroke='%23ffffff' stroke-width='20' stroke-linecap='round'/><circle cx='256' cy='256' r='16' fill='%23ef4444'/></svg>">
 
@@ -97,7 +97,7 @@
       color: var(--subtext);
     }
 
-    input[type="number"], input[type="text"], select {
+    input[type="number"], input[type="text"], select, input[type="range"] {
       width: 100%;
       padding: 10px 12px;
       border: 1px solid #cbd5e1;
@@ -476,6 +476,12 @@
       <input type="range" id="pdAdjustSlider" min="0.8" max="1.2" step="0.01" value="1.0" oninput="drawCameraOverlay()">
     </div>
 
+    <!-- Arm Length Adjustment Slider -->
+    <div id="armSliderContainer" style="display: none;">
+      <label style="margin-top: 4px;" data-i18n="lblArmSlant">距離微調整 (補正スライダー):</label>
+      <input type="range" id="armAdjustSlider" min="0.7" max="1.3" step="0.01" value="1.0" oninput="drawCameraOverlay()">
+    </div>
+
     <!-- Live Calculated Result -->
     <div id="modalLiveValue" style="text-align: center; font-weight: bold; font-size: 1.1rem; color: var(--accent);">
       --
@@ -514,12 +520,13 @@
       modalPDTitle: "カードレス PD (瞳孔間距離) 測定",
       modalPDHelp: "インカメラに顔を向け、青い枠に顔輪郭を合わせ、赤十字線が瞳の中心に重なるように調整してください。",
       modalArmTitle: "カメラによる腕の長さ (距離) 測定",
-      modalArmHelp: "腕をピンと伸ばしてスマホを持ち、ガイド枠（ガイド円）に両目が収まるように調整してください。",
+      modalArmHelp: "腕をピンと伸ばしてスマホを持ち、ガイド枠の円に両目が収まるように調整してください。",
       lblFaceWidth: "基準顔幅プリセット:",
       optMaleAverage: "男性標準 (顔幅 約14cm)",
       optFemaleAverage: "女性標準 (顔幅 約13.2cm)",
       optSmallFace: "小顔・子供 (約12.5cm)",
       lblPDSlant: "瞳位置ガイド微調整:",
+      lblArmSlant: "腕の長さ微調整スライダー:",
       btnCancel: "キャンセル",
       btnApply: "この値を適用",
       unitM: "m",
@@ -556,6 +563,7 @@
       optFemaleAverage: "Female Average (Face Width ~13.2cm)",
       optSmallFace: "Small Face / Youth (~12.5cm)",
       lblPDSlant: "Pupil Guide Adjust:",
+      lblArmSlant: "Arm Length Fine-tune Slider:",
       btnCancel: "Cancel",
       btnApply: "Apply Value",
       unitM: "m",
@@ -717,15 +725,18 @@
     const modalTitle = document.getElementById('modalTitle');
     const modalHelp = document.getElementById('modalHelp');
     const pdSlider = document.getElementById('pdSliderContainer');
+    const armSlider = document.getElementById('armSliderContainer');
 
     if (mode === 'pd') {
       modalTitle.innerText = i18n[currentLang].modalPDTitle;
       modalHelp.innerText = i18n[currentLang].modalPDHelp;
       pdSlider.style.display = 'block';
+      armSlider.style.display = 'none';
     } else {
       modalTitle.innerText = i18n[currentLang].modalArmTitle;
       modalHelp.innerText = i18n[currentLang].modalArmHelp;
       pdSlider.style.display = 'none';
+      armSlider.style.display = 'block';
     }
 
     modal.classList.add('active');
@@ -794,6 +805,7 @@
 
     } else if (activeModalMode === 'arm') {
       const pdMm = parseFloat(document.getElementById('inputPD').value) || 64;
+      const armSliderVal = parseFloat(document.getElementById('armAdjustSlider').value) || 1.0;
 
       ctx.strokeStyle = '#10b981';
       ctx.lineWidth = 3;
@@ -804,8 +816,9 @@
       ctx.arc(centerX + eyeSpacingPx / 2, centerY - 10, 25, 0, 2 * Math.PI);
       ctx.stroke();
 
-      const estimatedArmCm = (pdMm * 500) / (eyeSpacingPx * 10);
-      tempMeasuredValue = Math.min(Math.max(estimatedArmCm, 30), 90);
+      const rawArmCm = (pdMm * 500) / (eyeSpacingPx * 10);
+      const estimatedArmCm = rawArmCm * armSliderVal;
+      tempMeasuredValue = Math.min(Math.max(estimatedArmCm, 30), 100);
 
       document.getElementById('modalLiveValue').innerText = `${i18n[currentLang].armLabel}: ${tempMeasuredValue.toFixed(1)} ${i18n[currentLang].unitCm}`;
     }

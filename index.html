@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Smart Rangefinder - AI Eye Tracker</title>
+  <title>Smart Rangefinder - Eye Track & Auto Capture</title>
   
-  <!-- MediaPipe Face Mesh & Camera Utils の読み込み -->
+  <!-- MediaPipe Face Mesh & Camera Utils -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
 
@@ -362,6 +362,23 @@
       margin-top: 4px;
       line-height: 1.3;
     }
+
+    /* Confirm Banner Overlay */
+    .confirm-overlay-box {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      right: 20px;
+      background: rgba(15, 23, 42, 0.9);
+      color: white;
+      padding: 12px;
+      border-radius: 8px;
+      text-align: center;
+      font-size: 0.9rem;
+      display: none;
+      z-index: 10;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+    }
   </style>
 </head>
 <body>
@@ -463,10 +480,17 @@
   <div class="camera-container">
     <video id="webcam" autoplay playsinline muted></video>
     <canvas id="cameraCanvas" class="camera-overlay-canvas"></canvas>
+    
+    <!-- 安定検出時の確認ダイアログメッセージ -->
+    <div class="confirm-overlay-box" id="confirmOverlay">
+      <div id="confirmText" style="font-weight: bold; font-size: 1.05rem; color: #38bdf8;"></div>
+      <div style="font-size: 0.75rem; margin-top: 4px;" data-i18n="promptConfirm">この値で設定しますか？</div>
+    </div>
   </div>
+
   <div class="camera-controls">
     <div id="modalTitle" style="font-weight: bold; font-size: 0.95rem; color: var(--primary);">AI検出中...</div>
-    <div id="modalHelp" style="font-size: 0.75rem; color: var(--subtext);">瞳に表示されるリングの位置を確認してください。</div>
+    <div id="modalHelp" style="font-size: 0.75rem; color: var(--subtext);">瞳の追従リングを確認し、固定してそのままお待ちください。</div>
     
     <div id="modalLiveValue" style="text-align: center; font-weight: bold; font-size: 1.3rem; color: var(--accent);">
       --
@@ -474,7 +498,7 @@
 
     <div style="display: flex; gap: 8px;">
       <button class="btn btn-secondary" style="flex:1;" onclick="closeCameraModal()" data-i18n="btnCancel">キャンセル</button>
-      <button class="btn btn-accent" style="flex:1;" onclick="applyCameraMeasurement()" data-i18n="btnApply">この値を適用</button>
+      <button class="btn btn-accent" id="btnApplyValue" style="flex:1;" onclick="applyCameraMeasurement()" data-i18n="btnApply">この値を適用</button>
     </div>
   </div>
 </div>
@@ -504,11 +528,13 @@
       interactiveInstruction: "【使い方】1. 右目で目標物左端に赤線を合わせます。 2. スマホを動かさず左目で見直し、青線を目標物左端までドラッグすると距離が計算されます。",
       modalPDTitle: "AI PD (瞳孔間距離) 追従測定",
       modalArmTitle: "AI 腕の長さ (画面距離) 追従測定",
-      voicePD: "カメラを直視してください。AIが瞳を追従します。",
-      voiceArm: "腕をピンと伸ばして、カメラに顔を映してください。",
-      voiceApplied: "測定値を適用しました。",
+      voicePD: "カメラを正面から見て静止してください。",
+      voiceArm: "腕をピンと伸ばし、カメラを正面から見てください。",
+      voiceStable: "測定値が安定しました。設定しますか？",
+      voiceApplied: "設定を完了しました。",
       btnCancel: "キャンセル",
       btnApply: "この値を適用",
+      promptConfirm: "この値で設定しますか？",
       unitM: "m",
       unitCm: "cm",
       unitMm: "mm"
@@ -536,11 +562,13 @@
       interactiveInstruction: "[How to use] 1. Align red line with target left edge using Right Eye. 2. Keep phone still, switch to Left Eye, and drag blue line to target left edge.",
       modalPDTitle: "AI PD Tracking Measurement",
       modalArmTitle: "AI Arm Length Tracking Measurement",
-      voicePD: "Look at the camera. AI is tracking your pupils.",
+      voicePD: "Look at the camera and hold still.",
       voiceArm: "Fully extend your arm and look at the camera.",
-      voiceApplied: "Measurement applied.",
+      voiceStable: "Measurement stabilized. Do you want to set this value?",
+      voiceApplied: "Value applied.",
       btnCancel: "Cancel",
       btnApply: "Apply Value",
+      promptConfirm: "Do you want to set this value?",
       unitM: "m",
       unitCm: "cm",
       unitMm: "mm"
@@ -549,10 +577,11 @@
 
   let currentLang = 'ja';
   let activeModalMode = null;
-  let mediaStream = null;
   let faceMesh = null;
   let camera = null;
   let tempMeasuredValue = 0;
+  let stableHistory = [];
+  let isStableLocked = false;
 
   let isDragging = false;
   let lineTargetPosPx = 150;
@@ -706,13 +735,18 @@
     readout.innerText = `${distanceM.toFixed(1)} ${i18n[currentLang].unitM}`;
   }
 
-  // --- Eye-Tracking Auto Calibration Engine ---
+  // --- 安定時ダイアログ確認付き AI Eye-Tracking Engine ---
   async function startAICalibration(mode) {
     activeModalMode = mode;
+    stableHistory = [];
+    isStableLocked = false;
+
     const modal = document.getElementById('cameraModal');
     const modalTitle = document.getElementById('modalTitle');
+    const confirmOverlay = document.getElementById('confirmOverlay');
     const videoElement = document.getElementById('webcam');
 
+    confirmOverlay.style.display = 'none';
     modalTitle.innerText = mode === 'pd' ? i18n[currentLang].modalPDTitle : i18n[currentLang].modalArmTitle;
     modal.classList.add('active');
 
@@ -725,8 +759,8 @@
       faceMesh.setOptions({
         maxNumFaces: 1,
         refineLandmarks: true,
-        minDetectionConfidence: 0.6,
-        minTrackingConfidence: 0.6
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
       });
       faceMesh.onResults(onFaceMeshResults);
     }
@@ -750,11 +784,10 @@
   }
 
   function drawPupilTracker(ctx, x, y) {
-    // 瞳に自動追従するリング（緑）と中心照準（赤ドット）を描画
     ctx.strokeStyle = '#10b981';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.arc(x, y, 16, 0, 2 * Math.PI);
+    ctx.arc(x, y, 14, 0, 2 * Math.PI);
     ctx.stroke();
 
     ctx.fillStyle = '#ef4444';
@@ -764,6 +797,8 @@
   }
 
   function onFaceMeshResults(results) {
+    if (isStableLocked) return; // 判定確定後は更新を一時固定
+
     const canvas = document.getElementById('cameraCanvas');
     const ctx = canvas.getContext('2d');
     const video = document.getElementById('webcam');
@@ -780,47 +815,70 @@
 
     const landmarks = results.multiFaceLandmarks[0];
     
-    // MediaPipe の虹彩（瞳孔中心）ランドマーク 
-    // 左目虹彩中心: 468, 右目虹彩中心: 473 (インカメラ鏡像反転を自動補正)
-    const leftIris = landmarks[468] || landmarks[33];
-    const rightIris = landmarks[473] || landmarks[263];
+    // 左右の目（外眼角 33, 263 または 虹彩 468, 473）
+    const leftEye = landmarks[468] || landmarks[33];
+    const rightEye = landmarks[473] || landmarks[263];
 
-    // キャンバス座標系に変換 (鏡像表示のため X座標を反転)
-    const x1 = (1 - leftIris.x) * canvas.width;
-    const y1 = leftIris.y * canvas.height;
-    const x2 = (1 - rightIris.x) * canvas.width;
-    const y2 = rightIris.y * canvas.height;
+    // 鏡像反転に対応した正しいX/Y画面座標
+    const x1 = (1 - leftEye.x) * canvas.width;
+    const y1 = leftEye.y * canvas.height;
+    const x2 = (1 - rightEye.x) * canvas.width;
+    const y2 = rightEye.y * canvas.height;
 
-    // 瞳の追従リングを描画
+    // 瞳トラッキングリング描画
     drawPupilTracker(ctx, x1, y1);
     drawPupilTracker(ctx, x2, y2);
 
-    // 2眼間のピクセル距離
     const eyeDistPx = Math.hypot(x2 - x1, y2 - y1);
     const canvasWidth = canvas.width;
 
+    let currentValue = 0;
+
     if (activeModalMode === 'pd') {
-      // 画面上の目の幅ピクセルと基準顔幅（実寸）の比率からPD（mm）を計算
-      const calculatedPD = Math.min(Math.max((eyeDistPx / canvasWidth) * 280, 52), 74);
-      tempMeasuredValue = calculatedPD;
-      document.getElementById('modalLiveValue').innerText = `PD: ${calculatedPD.toFixed(1)} ${i18n[currentLang].unitMm}`;
-      
+      currentValue = Math.min(Math.max((eyeDistPx / canvasWidth) * 270, 52), 72);
+      document.getElementById('modalLiveValue').innerText = `PD: ${currentValue.toFixed(1)} ${i18n[currentLang].unitMm}`;
     } else if (activeModalMode === 'arm') {
       const pdMm = parseFloat(document.getElementById('inputPD').value) || 61;
-      
-      // 【動的レスポンス計算】目から画面までの距離 (cm)
-      // 近づけると数値が小さく（例: 35cm）、離すと大きく（例: 65cm）動的に即時反応
-      const armDistanceCm = (pdMm * canvasWidth) / (eyeDistPx * 4.2);
-      const calculatedArm = Math.min(Math.max(armDistanceCm, 25), 85);
-      
-      tempMeasuredValue = calculatedArm;
-      document.getElementById('modalLiveValue').innerText = `${i18n[currentLang].armLabel}: ${calculatedArm.toFixed(1)} ${i18n[currentLang].unitCm}`;
+      // 画面との距離（cm）をリアルタイム可変計算
+      const rawArmCm = (pdMm * canvasWidth) / (eyeDistPx * 4.0);
+      currentValue = Math.min(Math.max(rawArmCm, 30), 85);
+      document.getElementById('modalLiveValue').innerText = `${i18n[currentLang].armLabel}: ${currentValue.toFixed(1)} ${i18n[currentLang].unitCm}`;
     }
+
+    tempMeasuredValue = currentValue;
+
+    // 安定検出のチェック（最近10フレームのぶれ幅が小さいか）
+    stableHistory.push(currentValue);
+    if (stableHistory.length > 12) stableHistory.shift();
+
+    if (stableHistory.length === 12) {
+      const maxVal = Math.max(...stableHistory);
+      const minVal = Math.min(...stableHistory);
+      if (maxVal - minVal < 1.8) { // ぶれ幅1.8以下で安定とみなす
+        isStableLocked = true;
+        triggerConfirmationPrompt(currentValue);
+      }
+    }
+  }
+
+  // 測定値安定時のキャプチャ＆メッセージ提示
+  function triggerConfirmationPrompt(value) {
+    const confirmOverlay = document.getElementById('confirmOverlay');
+    const confirmText = document.getElementById('confirmText');
+    const unit = activeModalMode === 'pd' ? i18n[currentLang].unitMm : i18n[currentLang].unitCm;
+    const label = activeModalMode === 'pd' ? 'PD' : i18n[currentLang].armLabel;
+
+    confirmText.innerText = `${label}: ${value.toFixed(1)} ${unit}`;
+    confirmOverlay.style.display = 'block';
+
+    speakMessage(`${value.toFixed(0)} ${unit}。 ${i18n[currentLang].voiceStable}`);
   }
 
   function closeCameraModal() {
     const modal = document.getElementById('cameraModal');
     modal.classList.remove('active');
+    document.getElementById('confirmOverlay').style.display = 'none';
+    isStableLocked = false;
     if (camera) {
       camera.stop();
     }

@@ -548,7 +548,7 @@
   let activeModalMode = null;
   let faceMesh = null;
   let camera = null;
-  let tempMeasuredValue = 0;
+  let tempMeasuredValue = 60; // デフォルト値の安全な初期設定
 
   let isDragging = false;
   let lineTargetPosPx = 150;
@@ -702,17 +702,18 @@
     readout.innerText = `${distanceM.toFixed(1)} ${i18n[currentLang].unitM}`;
   }
 
-  // --- 完全にスムーズなリアルタイム追従＆手動確定エンジン ---
+  // --- リアルタイム追従＆安全な初期値エンジン ---
   async function startAICalibration(mode) {
     activeModalMode = mode;
-    tempMeasuredValue = 0;
+    // 起動時に現在の入力欄の値を一時保存のベース値として安全にセット
+    tempMeasuredValue = mode === 'pd' ? (parseFloat(document.getElementById('inputPD').value) || 61) : (parseFloat(document.getElementById('inputArm').value) || 60);
 
     const modal = document.getElementById('cameraModal');
     const modalTitle = document.getElementById('modalTitle');
     const videoElement = document.getElementById('webcam');
 
     modalTitle.innerText = mode === 'pd' ? i18n[currentLang].modalPDTitle : i18n[currentLang].modalArmTitle;
-    document.getElementById('modalLiveValue').innerText = "顔を写してください...";
+    document.getElementById('modalLiveValue').innerText = `${tempMeasuredValue.toFixed(1)} ${mode === 'pd' ? i18n[currentLang].unitMm : i18n[currentLang].unitCm} (顔を写してください...)`;
     modal.classList.add('active');
 
     speakMessage(mode === 'pd' ? i18n[currentLang].voicePD : i18n[currentLang].voiceArm);
@@ -772,13 +773,11 @@
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
-      document.getElementById('modalLiveValue').innerText = "顔をカメラに向けてください";
       return;
     }
 
     const landmarks = results.multiFaceLandmarks[0];
     
-    // 虹彩（瞳孔中心）ランドマーク 468 (左), 473 (右)
     const leftEye = landmarks[468] || landmarks[33];
     const rightEye = landmarks[473] || landmarks[263];
 
@@ -800,18 +799,16 @@
     let currentValue = 0;
 
     if (activeModalMode === 'pd') {
-      // 瞳間距離 (mm) のリアルタイム計算
       currentValue = Math.min(Math.max((eyeDistPx / canvasWidth) * 270, 45), 80);
       document.getElementById('modalLiveValue').innerText = `PD: ${currentValue.toFixed(1)} ${i18n[currentLang].unitMm}`;
     } else if (activeModalMode === 'arm') {
       const pdMm = parseFloat(document.getElementById('inputPD').value) || 61;
-      // 腕の長さ (cm) のリアルタイム計算
-      const rawArmCm = (pdMm * canvasWidth) / (eyeDistPx * 3.8);
-      currentValue = Math.min(Math.max(rawArmCm, 30), 90);
+      // 腕の長さ (cm) のリアルタイム計算（自然な変動範囲に最適化）
+      const rawArmCm = (pdMm * canvasWidth) / (eyeDistPx * 4.1);
+      currentValue = Math.min(Math.max(rawArmCm, 35), 80);
       document.getElementById('modalLiveValue').innerText = `${i18n[currentLang].armLabel}: ${currentValue.toFixed(1)} ${i18n[currentLang].unitCm}`;
     }
 
-    // 常に最新の数値をキープ（いつでもユーザーがボタンで確定できる）
     tempMeasuredValue = currentValue;
   }
 

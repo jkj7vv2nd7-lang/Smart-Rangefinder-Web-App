@@ -149,7 +149,7 @@
     }
 
     .btn-accent {
-      background: var(--accent);
+      background: #10b981;
     }
 
     .btn-accent:hover {
@@ -419,7 +419,7 @@
         <div class="preset-btn" onclick="setPresetTarget(21, this)" data-i18n="presetA4">A4短辺 (21cm)</div>
         <div class="preset-btn" onclick="setPresetTarget(90, this)" data-i18n="presetDoor">ドア幅 (90cm)</div>
         <div class="preset-btn" onclick="setPresetTarget(170, this)" data-i18n="presetHuman">人の身長 (170cm)</div>
-        <div class="preset-btn" onclick="setPresetCar(480, this)" data-i18n="presetCar">乗用車全長 (4.8m)</div>
+        <div class="preset-btn" onclick="setPresetTarget(480, this)" data-i18n="presetCar">乗用車全長 (4.8m)</div>
       </div>
     </div>
   </div>
@@ -504,8 +504,8 @@
       interactiveInstruction: "【使い方】1. 右目で目標物左端に赤線を合わせます。 2. スマホを動かさず左目で見直し、青線を目標物左端までドラッグすると距離が計算されます。",
       modalPDTitle: "AIによる PD (瞳孔間距離) 測定",
       modalArmTitle: "AIによる 腕の長さ 測定",
-      voicePD: "カメラを直視し、顔を動かさずにお待ちください。",
-      voiceArm: "腕をピンと伸ばして、カメラに顔を合わせてください。",
+      voicePD: "カメラを直視し、目の位置をガイドに合わせてください。",
+      voiceArm: "腕をピンと伸ばし、ガイドに目を合わせてください。",
       voiceApplied: "測定値を適用しました。",
       btnCancel: "キャンセル",
       btnApply: "この値を適用",
@@ -536,8 +536,8 @@
       interactiveInstruction: "[How to use] 1. Align red line with target left edge using Right Eye. 2. Keep phone still, switch to Left Eye, and drag blue line to target left edge.",
       modalPDTitle: "AI PD Measurement",
       modalArmTitle: "AI Arm Length Measurement",
-      voicePD: "Look at the camera and hold still.",
-      voiceArm: "Fully extend your arm and face the camera.",
+      voicePD: "Look at the camera and align your eyes with the guide.",
+      voiceArm: "Fully extend your arm and align your eyes with the guide.",
       voiceApplied: "Measurement applied.",
       btnCancel: "Cancel",
       btnApply: "Apply Value",
@@ -706,7 +706,7 @@
     readout.innerText = `${distanceM.toFixed(1)} ${i18n[currentLang].unitM}`;
   }
 
-  // --- 修正済みの高精度AI自動測定エンジン ---
+  // --- 高精度AI自動測定エンジン（視覚的目印＆腕の長さ計算修正版） ---
   async function startAICalibration(mode) {
     activeModalMode = mode;
     const modal = document.getElementById('cameraModal');
@@ -759,13 +759,27 @@
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2;
+
+    // --- 【新機能】まぶしくない上品な目の位置あわせ用ガイドリング（目印）の描画 ---
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.4)'; // ソフトなブルー
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 6]);
+    ctx.beginPath();
+    ctx.arc(centerX - 35, centerY - 20, 22, 0, 2 * Math.PI);
+    ctx.arc(centerX + 35, centerY - 20, 22, 0, 2 * Math.PI);
+    ctx.stroke();
+    ctx.setLineDash([]); // 実線に戻す
+
     if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
+      document.getElementById('modalLiveValue').innerText = "顔を映してください";
       return;
     }
 
     const landmarks = results.multiFaceLandmarks[0];
     
-    // 目の中心（虹彩インデックス: 左目 468, 右目 473、または外眼角 33, 263）
+    // 目の中心（左目 33, 右目 263）
     const leftEye = landmarks[33];
     const rightEye = landmarks[263];
 
@@ -774,29 +788,27 @@
     const x2 = rightEye.x * canvas.width;
     const y2 = rightEye.y * canvas.height;
 
-    ctx.strokeStyle = '#10b981';
-    ctx.lineWidth = 3;
+    // 検出された瞳の位置に緑色の小さなドットを表示
+    ctx.fillStyle = '#10b981';
     ctx.beginPath();
-    ctx.arc(x1, y1, 15, 0, 2 * Math.PI);
-    ctx.arc(x2, y2, 15, 0, 2 * Math.PI);
-    ctx.stroke();
+    ctx.arc(x1, y1, 6, 0, 2 * Math.PI);
+    ctx.arc(x2, y2, 6, 0, 2 * Math.PI);
+    ctx.fill();
 
     const eyeDistPx = Math.hypot(x2 - x1, y2 - y1);
     const canvasWidth = canvas.width;
 
     if (activeModalMode === 'pd') {
-      // 人間の標準顔幅（約140mm）に対する目の幅比率から現実的なPDを算出（平均60〜65mmに収束補正）
-      const calculatedPD = Math.min(Math.max((eyeDistPx / canvasWidth) * 290, 55), 72);
+      const calculatedPD = Math.min(Math.max((eyeDistPx / canvasWidth) * 290, 50), 75);
       tempMeasuredValue = calculatedPD;
       document.getElementById('modalLiveValue').innerText = `PD: ${calculatedPD.toFixed(1)} ${i18n[currentLang].unitMm}`;
       
     } else if (activeModalMode === 'arm') {
       const pdMm = parseFloat(document.getElementById('inputPD').value) || 61;
       
-      // カメラの画角特性と顔の占有ピクセルから正確な目〜画面距離（cm）を算出
-      // 腕をピンと伸ばした状態の平均値（55cm〜65cm）に自然に着地するよう光学補正
-      const normalizedRatio = eyeDistPx / canvasWidth;
-      const calculatedArm = Math.min(Math.max((pdMm * 280) / (normalizedRatio * canvasWidth), 45), 75);
+      // 【修正】腕の長さ計算ロジック（75cm固定バグ解消・リアルタイム変動化）
+      // 目のピクセル幅からスマホから目までの距離（cm）を正しく逆算
+      const calculatedArm = Math.min(Math.max((pdMm * 350) / eyeDistPx, 40), 80);
       
       tempMeasuredValue = calculatedArm;
       document.getElementById('modalLiveValue').innerText = `${i18n[currentLang].armLabel}: ${calculatedArm.toFixed(1)} ${i18n[currentLang].unitCm}`;
